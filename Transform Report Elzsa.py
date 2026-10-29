@@ -2,7 +2,7 @@ import os
 import re
 import sys
 import shutil
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 import pandas as pd
 from datetime import datetime
 import json
@@ -20,11 +20,104 @@ DIR_OUTPUT = os.path.join(BASE_DIR, "output")
 FILE_MAPPING = os.path.join(BASE_DIR, "mapping_surveyor.xlsx")
 FILE_LOG = os.path.join(BASE_DIR, "log_proses_survey.xlsx")
 FILE_HTML_PETA = os.path.join(BASE_DIR, "index.html")
+FILE_CONFIG_TARGET = os.path.join(BASE_DIR, "target_config.xlsx")
 GITHUB_REPO_URL = "https://github.com/anggareinaldi-coder/elzsapackage.git"
 
 for direktori in [DIR_SOURCE, DIR_IMAGE, DIR_OUTPUT]:
     if not os.path.exists(direktori):
         os.makedirs(direktori)
+
+# Auto-generate target_config.xlsx jika belum ada
+if not os.path.exists(FILE_CONFIG_TARGET):
+    data_default_target = [
+        {"Role": "SBD", "Target Customer": 350, "Target Distribusi Elzsa Package": 700},
+        {"Role": "MBD", "Target Customer": 50, "Target Distribusi Elzsa Package": 100},
+        {"Role": "MBD's", "Target Customer": 50, "Target Distribusi Elzsa Package": 100},
+        {"Role": "MSD", "Target Customer": 200, "Target Distribusi Elzsa Package": 400},
+        {"Role": "ASM", "Target Customer": 10, "Target Distribusi Elzsa Package": 250}
+    ]
+    wb_cfg = Workbook()
+    ws_cfg = wb_cfg.active
+    ws_cfg.title = "Config Target"
+    ws_cfg.views.sheetView[0].showGridLines = True
+    
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    data_font = Font(name="Segoe UI", size=11, color="1E293B")
+    align_center = Alignment(horizontal="center", vertical="center")
+    align_right = Alignment(horizontal="right", vertical="center")
+    thin_border = Border(
+        left=Side(style='thin', color='CBD5E1'),
+        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'),
+        bottom=Side(style='thin', color='CBD5E1')
+    )
+
+    ws_cfg.merge_cells("A1:C1")
+    title_cell = ws_cfg["A1"]
+    title_cell.value = "KONFIGURASI TARGET PER PERSON (ROLE)"
+    title_cell.font = Font(name="Segoe UI", size=14, bold=True, color="1E3A8A")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws_cfg.row_dimensions[1].height = 35
+
+    headers = ["Role", "Target Customer", "Target Distribusi Elzsa Package"]
+    ws_cfg.row_dimensions[3].height = 25
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws_cfg.cell(row=3, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center" if col_idx == 1 else "right", vertical="center")
+        cell.border = thin_border
+
+    for row_idx, item in enumerate(data_default_target, start=4):
+        ws_cfg.row_dimensions[row_idx].height = 22
+        
+        cell_role = ws_cfg.cell(row=row_idx, column=1, value=item["Role"])
+        cell_role.font = data_font
+        cell_role.alignment = align_center
+        cell_role.border = thin_border
+        
+        cell_cust = ws_cfg.cell(row=row_idx, column=2, value=item["Target Customer"])
+        cell_cust.font = data_font
+        cell_cust.alignment = align_right
+        cell_cust.number_format = '#,##0'
+        cell_cust.border = thin_border
+        
+        cell_pkg = ws_cfg.cell(row=row_idx, column=3, value=item["Target Distribusi Elzsa Package"])
+        cell_pkg.font = data_font
+        cell_pkg.alignment = align_right
+        cell_pkg.number_format = '#,##0'
+        cell_pkg.border = thin_border
+
+    for col in ws_cfg.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.row == 1:
+                continue
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws_cfg.column_dimensions[col_letter].width = max(max_len + 6, 18)
+
+    wb_cfg.save(FILE_CONFIG_TARGET)
+    print(f"[INFO] File '{os.path.basename(FILE_CONFIG_TARGET)}' baru saja dibuat secara otomatis.")
+
+# Memuat konfigurasi target per person dari file Excel
+df_target_cfg = pd.read_excel(FILE_CONFIG_TARGET, header=2)
+TARGET_PER_PERSON = {}
+for idx, row in df_target_cfg.iterrows():
+    if pd.isna(row.iloc[0]):
+        continue
+    role_name = str(row.iloc[0]).strip().upper()
+    try:
+        cust_val = float(row.iloc[1])
+        pkg_val = float(row.iloc[2])
+        TARGET_PER_PERSON[role_name] = {"pkg": pkg_val, "cust": cust_val}
+    except Exception:
+        pass
 
 if not os.path.exists(FILE_MAPPING):
     df_template = pd.DataFrame(columns=["Surveyor ID", "Sales Name", "Position", "Region", "ASM"])
@@ -422,6 +515,7 @@ if semua_data_gabungan:
         payload_data = {
             "surveyData": list_data_peta,
             "masterSurveyor": master_list_json,
+            "targetPerPerson": TARGET_PER_PERSON,
             "lastUpdate": last_update_str
         }
         data_json = json.dumps(payload_data)
@@ -547,10 +641,6 @@ if semua_data_gabungan:
                         <label for="tablePositionFilter" data-i18n="filterRole">Filter Role:</label>
                         <select id="tablePositionFilter" onchange="onTablePositionChange()">
                             <option value="ALL" data-i18n="optAllRoles">-- Semua Role --</option>
-                            <option value="SBD">SBD</option>
-                            <option value="MSD">MSD</option>
-                            <option value="ASM">ASM</option>
-                            <option value="TSS">TSS</option>
                         </select>
                     </div>
                     <div class="filter-field">
@@ -653,6 +743,7 @@ if semua_data_gabungan:
         const rawPayload = __PAYLOAD_JSON_PLACEHOLDER__;
         const surveyData = rawPayload.surveyData || [];
         const masterSurveyor = rawPayload.masterSurveyor || [];
+        const targetPerPerson = rawPayload.targetPerPerson || {};
 
         const translations = {
             id: {
@@ -745,6 +836,7 @@ if semua_data_gabungan:
 
             populateTableRegionDropdown();
             populateTableAsmDropdown(document.getElementById('tableRegionFilter').value);
+            populateTablePositionDropdown();
             populateTableSurveyorDropdown(
                 document.getElementById('tableRegionFilter').value,
                 document.getElementById('tableAsmFilter').value,
@@ -767,13 +859,6 @@ if semua_data_gabungan:
                 );
             }
         }
-
-        const targetPerPerson = {
-            "SBD": { pkg: 600, cust: 300 },
-            "MSD": { pkg: 200, cust: 100 },
-            "ASM": { pkg: 40, cust: 4 },
-            "TSS": { pkg: 20, cust: 2 }
-        };
 
         const fmtNum = (num) => Number(num || 0).toLocaleString('en-US');
 
@@ -805,7 +890,7 @@ if semua_data_gabungan:
             return masterSurveyor.filter(m => {
                 if (reg && reg !== 'ALL' && m.region !== reg) return false;
                 if (asm && asm !== 'ALL' && m.asm !== asm) return false;
-                if (pos && pos !== 'ALL' && m.position.toUpperCase() !== pos.toUpperCase()) return false;
+                if (pos && pos !== 'ALL' && m.position.toUpperCase().trim() !== pos.toUpperCase().trim()) return false;
                 if (srv && srv !== 'ALL' && m.surveyor !== srv) return false;
                 return true;
             });
@@ -814,6 +899,7 @@ if semua_data_gabungan:
         function initTableFilters() {
             populateTableRegionDropdown();
             populateTableAsmDropdown('ALL');
+            populateTablePositionDropdown();
             populateTableSurveyorDropdown('ALL', 'ALL', 'ALL');
             renderTableData();
         }
@@ -851,6 +937,20 @@ if semua_data_gabungan:
             asmSelect.value = asms.includes(currentVal) ? currentVal : 'ALL';
         }
 
+        function populateTablePositionDropdown() {
+            const posSelect = document.getElementById('tablePositionFilter');
+            const currentVal = posSelect.value;
+            const defaultText = translations[currentLang].optAllRoles;
+            posSelect.innerHTML = `<option value="ALL">${defaultText}</option>`;
+            const roles = [...new Set(masterSurveyor.map(m => m.position.toUpperCase().trim()))].filter(r => r && r !== '-').sort();
+            roles.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r; opt.textContent = r;
+                posSelect.appendChild(opt);
+            });
+            posSelect.value = roles.includes(currentVal) ? currentVal : 'ALL';
+        }
+
         function populateTableSurveyorDropdown(region, asm, position) {
             const srvSelect = document.getElementById('tableSurveyorFilter');
             const currentVal = srvSelect.value;
@@ -860,7 +960,7 @@ if semua_data_gabungan:
             let subset = masterSurveyor;
             if (region && region !== 'ALL') subset = subset.filter(m => m.region === region);
             if (asm && asm !== 'ALL') subset = subset.filter(m => m.asm === asm);
-            if (position && position !== 'ALL') subset = subset.filter(m => m.position.toUpperCase() === position.toUpperCase());
+            if (position && position !== 'ALL') subset = subset.filter(m => m.position.toUpperCase().trim() === position.toUpperCase().trim());
 
             const surveyors = [...new Set(subset.map(m => m.surveyor))].filter(s => s && s !== '-').sort();
             surveyors.forEach(s => {
@@ -917,7 +1017,6 @@ if semua_data_gabungan:
 
             let filteredMasters = getTableFilteredMasters(regVal, asmVal, posVal, srvVal);
 
-            const roleRank = { 'ASM': 1, 'TSS': 2, 'SBD': 3, 'MSD': 4 };
             filteredMasters.sort((a, b) => {
                 let regA = a.region || '';
                 let regB = b.region || '';
@@ -927,9 +1026,9 @@ if semua_data_gabungan:
                 let asmB = b.asm || '';
                 if (asmA !== asmB) return asmA.localeCompare(asmB);
 
-                let rA = roleRank[a.position.toUpperCase().trim()] || 99;
-                let rB = roleRank[b.position.toUpperCase().trim()] || 99;
-                if (rA !== rB) return rA - rB;
+                let posA = a.position || '';
+                let posB = b.position || '';
+                if (posA !== posB) return posA.localeCompare(posB);
 
                 return (a.surveyor || '').localeCompare(b.surveyor || '');
             });
@@ -956,8 +1055,9 @@ if semua_data_gabungan:
 
             filteredMasters.forEach(m => {
                 let pos = m.position.toUpperCase().trim();
-                let tPkg = (targetPerPerson[pos] ? targetPerPerson[pos].pkg : 0);
-                let tCust = (targetPerPerson[pos] ? targetPerPerson[pos].cust : 0);
+                let roleTarget = targetPerPerson[pos] || { pkg: 0, cust: 0 };
+                let tPkg = roleTarget.pkg;
+                let tCust = roleTarget.cust;
 
                 let aPkg = actualPkgMap[m.surveyor_id] || 0;
                 let aCustSet = actualCustMap[m.surveyor_id] || new Set();
@@ -1215,7 +1315,7 @@ if semua_data_gabungan:
             let filteredMasters = masterSurveyor.filter(m => {
                 if (regVal && regVal !== 'ALL' && m.region !== regVal) return false;
                 if (asmVal && asmVal !== 'ALL' && m.asm !== asmVal) return false;
-                if (posVal && posVal !== 'ALL' && m.position.toUpperCase() !== posVal.toUpperCase()) return false;
+                if (posVal && posVal !== 'ALL' && m.position.toUpperCase().trim() !== posVal.toUpperCase().trim()) return false;
                 if (srvVal && srvVal !== 'ALL' && m.surveyor !== srvVal) return false;
                 return true;
             });
@@ -1325,7 +1425,7 @@ if semua_data_gabungan:
                     git_path = "git"
 
                 subprocess.run(f'"{git_path}" add .', cwd=BASE_DIR, shell=True, check=True)
-                subprocess.run(f'"{git_path}" commit -m "Auto-aggregate quantity on Elzsa Package Excel output and update dashboard pada {waktu_sekarang}"', cwd=BASE_DIR, shell=True, check=True)
+                subprocess.run(f'"{git_path}" commit -m "Dynamic target per person from target_config.xlsx and update dashboard pada {waktu_sekarang}"', cwd=BASE_DIR, shell=True, check=True)
                 subprocess.run(f'"{git_path}" push -u origin main', cwd=BASE_DIR, shell=True, check=True)
                 print("[SUKSES] Perubahan berhasil di-push otomatis ke GitHub (elzsapackage)! 🎉")
             except subprocess.CalledProcessError as git_err:
